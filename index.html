@@ -138,13 +138,13 @@
       </button>
     </nav>
 
-    <!-- 取引追加モーダル -->
+    <!-- 取引追加・編集モーダル -->
     <div id="tx-modal" class="absolute inset-0 z-30 hidden">
       <div class="absolute inset-0 bg-black/40 modal-enter" onclick="closeTxModal()"></div>
       <div class="absolute bottom-0 w-full bg-white rounded-t-2xl shadow-2xl flex flex-col modal-slide-up h-[90%]">
         
         <div class="flex justify-between items-center p-4 border-b border-gray-100 shrink-0">
-          <h2 class="text-lg font-bold text-gray-800">記録を追加</h2>
+          <h2 id="tx-modal-title" class="text-lg font-bold text-gray-800">記録を追加</h2>
           <button onclick="closeTxModal()" class="p-2 text-gray-400 hover:bg-gray-100 rounded-full">
             <i class="ph ph-x text-xl font-bold"></i>
           </button>
@@ -162,6 +162,8 @@
           </div>
 
           <form id="tx-form" onsubmit="saveTransaction(event)" class="space-y-5">
+            <input type="hidden" id="tx-id"> <!-- 編集用ID -->
+            
             <div>
               <label class="block text-xs font-semibold text-gray-500 mb-1">金額</label>
               <div class="relative">
@@ -196,8 +198,13 @@
           </form>
         </div>
 
-        <div class="p-4 border-t border-gray-100 bg-white pb-safe shrink-0">
-          <button type="submit" form="tx-form" class="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold text-lg hover:bg-indigo-700 active:scale-[0.98] transition-transform shadow-lg shadow-indigo-200">
+        <div class="flex gap-3 p-4 border-t border-gray-100 bg-white pb-safe shrink-0">
+          <div id="tx-delete-container" class="hidden w-1/3">
+            <button type="button" onclick="deleteTransaction()" class="w-full py-4 bg-red-50 text-red-600 rounded-xl font-bold text-lg hover:bg-red-100 active:scale-[0.98] transition-transform">
+              削除
+            </button>
+          </div>
+          <button type="submit" form="tx-form" id="tx-submit-btn" class="flex-1 py-4 bg-indigo-600 text-white rounded-xl font-bold text-lg hover:bg-indigo-700 active:scale-[0.98] transition-transform shadow-lg shadow-indigo-200">
             保存する
           </button>
         </div>
@@ -482,9 +489,9 @@
         const dateStr = `${d.getMonth() + 1}/${d.getDate()}`;
         
         return `
-          <div class="p-4 flex items-center justify-between">
+          <div onclick="openTxModal('${tx.id}')" class="p-4 flex items-center justify-between hover:bg-gray-50 active:bg-gray-100 cursor-pointer transition-colors">
             <div class="flex items-center space-x-4 min-w-0">
-              <div class="text-2xl bg-gray-50 w-12 h-12 rounded-full flex items-center justify-center shrink-0">${cat.icon}</div>
+              <div class="text-2xl bg-white border border-gray-100 shadow-sm w-12 h-12 rounded-full flex items-center justify-center shrink-0">${cat.icon}</div>
               <div class="min-w-0">
                 <p class="font-medium text-gray-800 leading-tight truncate">${cat.name}</p>
                 <div class="flex items-center text-xs text-gray-500 mt-1 space-x-2">
@@ -538,16 +545,47 @@
       document.getElementById('fab-button').style.display = tabId === 'settings' ? 'none' : 'block';
     }
 
-    // --- 取引追加モーダル制御 ---
-    function openTxModal() {
+    // --- 取引追加・編集モーダル制御 ---
+    function openTxModal(txId = null) {
       if(state.accounts.length === 0) {
-        alert("先にアカウント（財布やカード）を登録してください。");
+        // アカウントがない場合は強制的に設定タブへ
         switchTab('settings');
         return;
       }
-      setTxType('expense'); // デフォルト支出
-      document.getElementById('tx-amount').value = '';
-      document.getElementById('tx-note').value = '';
+
+      const tx = txId ? state.transactions.find(t => t.id === txId) : null;
+      const isEdit = !!tx;
+
+      // UIの切り替え
+      document.getElementById('tx-modal-title').innerText = isEdit ? '記録を編集' : '記録を追加';
+      document.getElementById('tx-submit-btn').innerText = isEdit ? '更新する' : '保存する';
+      
+      const deleteBtnContainer = document.getElementById('tx-delete-container');
+
+      if (isEdit) {
+        // 編集モード時の値セット
+        document.getElementById('tx-id').value = tx.id;
+        document.getElementById('tx-amount').value = tx.amount;
+        document.getElementById('tx-account').value = tx.accountId;
+        document.getElementById('tx-date').value = tx.date;
+        document.getElementById('tx-note').value = tx.note || '';
+        
+        setTxType(tx.type, true); // true を渡してカテゴリーの初期化を防ぐ
+        setTxCategory(tx.categoryId);
+        
+        deleteBtnContainer.classList.remove('hidden');
+      } else {
+        // 新規作成モード時の値セット
+        document.getElementById('tx-id').value = '';
+        document.getElementById('tx-amount').value = '';
+        document.getElementById('tx-date').value = new Date().toISOString().split('T')[0];
+        document.getElementById('tx-note').value = '';
+        
+        setTxType('expense'); // デフォルト支出
+        
+        deleteBtnContainer.classList.add('hidden');
+      }
+
       document.getElementById('tx-modal').classList.remove('hidden');
     }
 
@@ -555,9 +593,12 @@
       document.getElementById('tx-modal').classList.add('hidden');
     }
 
-    function setTxType(type) {
+    function setTxType(type, preserveCategory = false) {
       state.txForm.type = type;
-      state.txForm.categoryId = CATEGORIES[type][0].id;
+      
+      if (!preserveCategory) {
+        state.txForm.categoryId = CATEGORIES[type][0].id;
+      }
       
       const expBtn = document.getElementById('tx-type-expense');
       const incBtn = document.getElementById('tx-type-income');
@@ -599,24 +640,51 @@
       renderTxCategories();
     }
 
+    // 保存・更新処理
     function saveTransaction(e) {
       e.preventDefault();
       const amountStr = document.getElementById('tx-amount').value;
       if(!amountStr) return;
       
+      const id = document.getElementById('tx-id').value;
+      const accountId = document.getElementById('tx-account').value;
+      
+      // もしアカウントが選択されていない（削除された等）場合は最初のアカウントを選択
+      const finalAccountId = accountId || state.accounts[0]?.id;
+      if(!finalAccountId) return;
+
       const newTx = {
-        id: Date.now().toString(),
+        id: id || Date.now().toString(), // IDがあれば既存、なければ新規採番
         type: state.txForm.type,
         amount: parseInt(amountStr, 10),
-        accountId: document.getElementById('tx-account').value,
+        accountId: finalAccountId,
         categoryId: state.txForm.categoryId,
         date: document.getElementById('tx-date').value,
         note: document.getElementById('tx-note').value
       };
       
-      state.transactions.unshift(newTx); // 先頭に追加
+      if (id) {
+        // 既存の更新
+        state.transactions = state.transactions.map(tx => tx.id === id ? newTx : tx);
+      } else {
+        // 新規追加
+        state.transactions.unshift(newTx);
+      }
       
-      saveDataToStorage(); // ★ データ保存処理
+      saveDataToStorage();
+      renderApp();
+      closeTxModal();
+    }
+
+    // 削除処理
+    function deleteTransaction() {
+      const id = document.getElementById('tx-id').value;
+      if (!id) return;
+      
+      // 削除を実行
+      state.transactions = state.transactions.filter(tx => tx.id !== id);
+      
+      saveDataToStorage();
       renderApp();
       closeTxModal();
     }
